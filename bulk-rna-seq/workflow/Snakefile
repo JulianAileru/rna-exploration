@@ -1,0 +1,93 @@
+#Quality Control, Tool: FastQC
+#Phase I Read Alignment, Tool: STAR
+#Phase II Transcript Quantification, Tool: featureCounts 
+
+import os
+import yaml
+from utils.helper_functions import *
+configfile: "config.yaml"
+
+
+genome_url = config['reference_genome']
+genome_name = os.path.basename(genome_url)
+ref_output_path = f"reference/{genome_name}"
+
+gtf_url = config['reference_genome_gtf']
+gtf_name = os.path.basename(gtf_url)
+gtf_output_path = f"reference/{gtf_name}"
+
+with open("params/trim_galore_params.yaml") as f1:
+  trim_galore_params = yaml.safe_load(f1)
+
+def get_paired_samples(folder='data/raw-reads'):
+    lst = os.listdir(folder)
+    global_dict = {}
+    for file in lst:
+        file_lst = file.split("_")
+        if file_lst[0] not in global_dict:
+            global_dict[file_lst[0]] = {'r1': None,
+                                    'r2': None}
+        if file_lst[1] == '1.fastq':
+            global_dict[file_lst[0]]['r1'] = os.path.join(folder,file)
+        if file_lst[1] == '2.fastq':
+            global_dict[file_lst[0]]['r2'] = os.path.join(folder,file)
+    return global_dict
+
+paired_samples = get_paired_samples()
+SAMPLES = list(paired_samples.keys())
+
+
+#Get Reference Genome Information (GrCh37 in this case)
+
+rule QC:
+  input:
+    expand("pre-processing/{sample}",sample=SAMPLES),
+    expand("post-processing/{sample}",sample=SAMPLES)
+
+rule get_reference_genome:
+  output:
+    ref_output_path
+  params:
+    genome_url = genome_url
+  shell:
+    "curl -L {params.genome_url} -o {output}"
+
+rule get_reference_gtf:
+  output:
+    gtf_output_path
+  params:
+    gtf_url = gtf_url
+  shell:
+    "curl -L {params.gtf_url} -o {output}"
+
+rule fastqc_preprocessing:
+  input:
+    r1 = lambda wildcards:paired_samples[wildcards.sample]["r1"],
+    r2 = lambda wildcards:paired_samples[wildcards.sample]["r2"]
+  output:
+    directory("pre-processing/{sample}")
+  conda:
+    "envs/trim-env.yaml"
+  shell:
+    """
+    echo "disabling all filtering to look at raw-data"
+    trim_galore --fastqc --paired --quality 0 --length 0 {input.r1} {input.r2} --output_dir {output}
+    """
+
+rule trim_galore:
+  input:
+    r1 = lambda wildcards: paired_samples[wildcards.sample]["r1"],
+    r2 = lambda wildcards: paired_samples[wildcards.sample]["r2"]
+  output:
+    directory("post-processing/{sample}")
+  params:
+    quality = trim_galore_params['quality'],
+    length = trim_galore_params['length'],
+    clip_R1 = trim_galore_params['clip_R1'],
+    clip_R2 = trim_galore_params['clip_R2']
+  conda:
+    "envs/trim-env.yaml"
+  shell:
+    "trim_galore --phred33 --quality {params.quality} --fastqc --illumina --length {params.length} "
+    "--paired --output_dir {output} --clip_R1 {params.clip_R1} --clip_R2 {params.clip_R2} {input.r1} {input.r2}"
+
