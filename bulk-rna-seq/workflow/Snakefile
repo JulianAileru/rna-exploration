@@ -5,6 +5,7 @@
 import os
 import yaml
 from utils.helper_functions import *
+import glob 
 configfile: "config.yaml"
 
 
@@ -19,30 +20,16 @@ gtf_output_path = f"reference/{gtf_name}"
 with open("params/trim_galore_params.yaml") as f1:
   trim_galore_params = yaml.safe_load(f1)
 
-def get_paired_samples(folder='data/raw-reads'):
-    lst = os.listdir(folder)
-    global_dict = {}
-    for file in lst:
-        file_lst = file.split("_")
-        if file_lst[0] not in global_dict:
-            global_dict[file_lst[0]] = {'r1': None,
-                                    'r2': None}
-        if file_lst[1] == '1.fastq':
-            global_dict[file_lst[0]]['r1'] = os.path.join(folder,file)
-        if file_lst[1] == '2.fastq':
-            global_dict[file_lst[0]]['r2'] = os.path.join(folder,file)
-    return global_dict
 
-paired_samples = get_paired_samples()
+
+paired_samples = get_paired_samples(folder='data/raw-reads')
 SAMPLES = list(paired_samples.keys())
-
-
-#Get Reference Genome Information (GrCh37 in this case)
 
 rule QC:
   input:
     expand("pre-processing/{sample}",sample=SAMPLES),
-    expand("post-processing/{sample}",sample=SAMPLES)
+    expand("post-processing/{sample}",sample=SAMPLES),
+    "logs/multiqc/multiqc_report.html"
 
 rule get_reference_genome:
   output:
@@ -91,3 +78,15 @@ rule trim_galore:
     "trim_galore --phred33 --quality {params.quality} --fastqc --illumina --length {params.length} "
     "--paired --output_dir {output} --clip_R1 {params.clip_R1} --clip_R2 {params.clip_R2} {input.r1} {input.r2}"
 
+rule multiqc_report:
+  input:
+    lambda wildcards: glob.glob("post-processing/*")
+  output:
+    html = "logs/multiqc/multiqc_report.html"
+  conda:
+    "envs/multiqc-env.yaml"
+  log:
+    "logs/multiqc/multiqc.log"
+  shell:
+    "multiqc {input} post-processing --force "
+    "--filename multiqc_report.html --outdir logs/multiqc > {log} 2>&1"
