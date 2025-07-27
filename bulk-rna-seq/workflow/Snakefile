@@ -4,89 +4,95 @@
 
 import os
 import yaml
+import glob
 from utils.helper_functions import *
-import glob 
 configfile: "config.yaml"
 
+def get_samples(folder):
+  lst = os.listdir(folder)
+  lst = [x.split("_")[0] for x in lst]
+  return list(set(lst))
 
-genome_url = config['reference_genome']
-genome_name = os.path.basename(genome_url)
-ref_output_path = f"reference/{genome_name}"
-
-gtf_url = config['reference_genome_gtf']
-gtf_name = os.path.basename(gtf_url)
-gtf_output_path = f"reference/{gtf_name}"
-
-with open("params/trim_galore_params.yaml") as f1:
+with(open("params/trim_galore_params.yaml")) as f1:
   trim_galore_params = yaml.safe_load(f1)
 
 
+SAMPLES = get_samples(folder='data/raw-reads')
 
-paired_samples = get_paired_samples(folder='data/raw-reads')
-SAMPLES = list(paired_samples.keys())
-
-rule QC:
+rule all:
   input:
-    expand("pre-processing/{sample}",sample=SAMPLES),
-    expand("post-processing/{sample}",sample=SAMPLES),
-    "logs/multiqc/multiqc_report.html"
+# ---Quality-Control---
+    # FastQC Check 
+    expand("pre-processing/{sample}_1_fastqc.html", sample=SAMPLES),
+    expand("pre-processing/{sample}_2_fastqc.html", sample=SAMPLES),
+    # Trim Reads 
+    expand("data/trimmed_reads/{sample}_1_val_1.fq",sample=SAMPLES),
+    expand("data/trimmed_reads/{sample}_2_val_2.fq",sample=SAMPLES),
+    # FastQC Check 
+    expand("post-processing/{sample}_1_val_1_fastqc.html", sample=SAMPLES),
+    expand("post-processing/{sample}_2_val_2_fastqc.html", sample=SAMPLES),
+    # MultiQC report 
+    "multiqc/multiqc_report.html"
+# ---Read Alignment (PhaseI)---
 
-rule get_reference_genome:
-  output:
-    ref_output_path
-  params:
-    genome_url = genome_url
-  shell:
-    "curl -L {params.genome_url} -o {output}"
-
-rule get_reference_gtf:
-  output:
-    gtf_output_path
-  params:
-    gtf_url = gtf_url
-  shell:
-    "curl -L {params.gtf_url} -o {output}"
 
 rule fastqc_preprocessing:
   input:
-    r1 = lambda wildcards:paired_samples[wildcards.sample]["r1"],
-    r2 = lambda wildcards:paired_samples[wildcards.sample]["r2"]
+    r1 = "data/raw-reads/{sample}_1.fastq",
+    r2 = "data/raw-reads/{sample}_2.fastq"
   output:
-    directory("pre-processing/{sample}")
+    r1_report = "pre-processing/{sample}_1_fastqc.html",
+    r2_report = "pre-processing/{sample}_2_fastqc.html"
   conda:
-    "envs/trim-env.yaml"
+    "envs/fastqc-env.yaml"
   shell:
     """
-    echo "disabling all filtering to look at raw-data"
-    trim_galore --fastqc --paired --quality 0 --length 0 {input.r1} {input.r2} --output_dir {output}
+    fastqc {input.r1} {input.r2} -o pre-processing
     """
 
 rule trim_galore:
   input:
-    r1 = lambda wildcards: paired_samples[wildcards.sample]["r1"],
-    r2 = lambda wildcards: paired_samples[wildcards.sample]["r2"]
+    r1 = "data/raw-reads/{sample}_1.fastq",
+    r2 = "data/raw-reads/{sample}_2.fastq"
   output:
-    directory("post-processing/{sample}")
+    "data/trimmed_reads/{sample}_1_val_1.fq",
+    "data/trimmed_reads/{sample}_2_val_2.fq"
+  conda:
+    "envs/trim-env.yaml"
   params:
     quality = trim_galore_params['quality'],
     length = trim_galore_params['length'],
     clip_R1 = trim_galore_params['clip_R1'],
     clip_R2 = trim_galore_params['clip_R2']
-  conda:
-    "envs/trim-env.yaml"
   shell:
-    "trim_galore --phred33 --quality {params.quality} --fastqc --illumina --length {params.length} "
-    "--paired --output_dir {output} --clip_R1 {params.clip_R1} --clip_R2 {params.clip_R2} {input.r1} {input.r2}"
+    "trim_galore --phred33 --quality {params.quality} --illumina --length {params.length} "
+    "--paired --output_dir data/trimmed_reads/ --clip_R1 {params.clip_R1} --clip_R2 {params.clip_R2} {input.r1} {input.r2}"
 
-rule multiqc_report:
+rule fastqc_postprocessing:
   input:
-    lambda wildcards: glob.glob("post-processing/*")
+    r1 = expand("data/trimmed_reads/{sample}_1_val_1.fq",sample=SAMPLES),
+    r2 = expand("data/trimmed_reads/{sample}_2_val_2.fq",sample=SAMPLES)
   output:
-    html = "logs/multiqc/multiqc_report.html"
+    r1_report = "post-processing/{sample}_1_val_1_fastqc.html",
+    r2_report = "post-processing/{sample}_2_val_2_fastqc.html"
+  conda:
+    "envs/fastqc-env.yaml"
+  shell:
+    "fastqc {input.r1} {input.r2} -o post-processing"
+
+rule multiqc:
+  input:
+    expand("pre-processing/{sample}_1_fastqc.html", sample=SAMPLES) +
+    expand("pre-processing/{sample}_2_fastqc.html", sample=SAMPLES) +
+    expand("post-processing/{sample}_1_val_1_fastqc.html", sample=SAMPLES) +
+    expand("post-processing/{sample}_2_val_2_fastqc.html", sample=SAMPLES)
+  output:
+    "multiqc/multiqc_report.html"
   conda:
     "envs/multiqc-env.yaml"
-  log:
-    "logs/multiqc/multiqc.log"
   shell:
-    "multiqc {input} post-processing --force "
-    "--filename multiqc_report.html --outdir logs/multiqc > {log} 2>&1"
+     "multiqc pre-processing post-processing -o multiqc"
+
+
+  
+
