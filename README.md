@@ -21,7 +21,8 @@
     - HISAT2
     - featureCounts 
 ## workflow-graph
-![snake-make-graph]("bulk-rna-seq/workflow/figures/rulegraph.pdf")
+<img src="bulk-rna-seq/workflow/figures/rulegraph.png" alt="Alt text" width="500">
+
 ## R-dependencies 
 
 ## All figures are reproductions of the original results published in the paper cited above. 
