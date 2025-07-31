@@ -18,7 +18,7 @@ with(open("params/trim_galore_params.yaml")) as f1:
 
 
 SAMPLES = get_samples(folder='data/raw-reads')
-
+genome = config['reference_genome']
 rule all:
   input:
 # ---Quality-Control---
@@ -32,8 +32,17 @@ rule all:
     expand("post-processing/{sample}_1_val_1_fastqc.html", sample=SAMPLES),
     expand("post-processing/{sample}_2_val_2_fastqc.html", sample=SAMPLES),
     # MultiQC report 
-    "multiqc/multiqc_report.html"
+    "multiqc/multiqc_report.html",
 # ---Read Alignment (PhaseI)---
+    # Build Reference Genome
+    "reference/genome-index/genome.1.ht2",
+    # Map Reads to Reference Genome
+    expand("data/sam-files/{sample}.sam",sample=SAMPLES),
+# ---Read Quantification (PhaseII)---
+    # Convert to BAM
+    expand("data/bam-files/{sample}.bam",sample=SAMPLES),
+    # Get FeatureCounts Table
+    "results/final_counts.txt"
 
 
 rule fastqc_preprocessing:
@@ -80,7 +89,7 @@ rule fastqc_postprocessing:
   shell:
     "fastqc {input.r1} {input.r2} -o post-processing"
 
-rule multiqc:
+rule multiqc_trim:
   input:
     expand("pre-processing/{sample}_1_fastqc.html", sample=SAMPLES) +
     expand("pre-processing/{sample}_2_fastqc.html", sample=SAMPLES) +
@@ -94,5 +103,59 @@ rule multiqc:
      "multiqc pre-processing post-processing -o multiqc"
 
 
-  
+rule hisat_build_index:
+  input:
+    genome = f"reference/{genome}"
+  output:
+    "reference/genome-index/genome.1.ht2",
+    "reference/genome.fa"
+  conda:
+    "envs/hisat2-env.yaml"
+  shell:
+    """
+    mkdir -p reference/genome-index
+    gunzip -c {input.genome} > reference/genome.fa
+    hisat2-build reference/genome.fa reference/genome-index/genome
+    """
 
+rule hisat_map_reads:
+  input:
+    r1 = "data/trimmed_reads/{sample}_1_val_1.fq",
+    r2 = "data/trimmed_reads/{sample}_2_val_2.fq",
+  output:
+    "data/sam-files/{sample}.sam"
+  conda:
+    "envs/hisat2-env.yaml"
+  shell:
+    "hisat2 -x reference/genome-index/genome -1 {input.r1} -2 {input.r2} -S {output}"
+
+rule convert_to_bam:
+  input:
+    "data/sam-files/{sample}.sam"
+  output:
+    bam = "data/bam-files/{sample}.bam",
+    sorted_bam = "data/bam-files/{sample}_sorted.bam"
+  conda:
+    "envs/samtools-env.yaml"
+  shell:
+    """
+    samtools view -bS {input} > {output.bam}
+    samtools sort {output.bam} -o {output.sorted_bam}
+    """
+
+rule get_counts_matrix:
+  input:
+    sorted_bam_files = expand("data/bam-files/{sample}_sorted.bam",sample=SAMPLES),
+    gtf = f"reference/{config['reference_genome_gtf']}"
+  output:
+    f1 = "results/final_counts.txt",
+    f2 = "results/final_counts.txt.summary"
+  conda:
+    "envs/featureCounts-env.yaml"
+  shell:
+    """
+    featureCounts -p -O -a {input.gtf} -o {output.f1} {input.sorted_bam_files}
+    """
+
+
+  
