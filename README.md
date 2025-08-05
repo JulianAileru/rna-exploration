@@ -20,6 +20,9 @@
     - fastqc=0.12.1
     - HISAT2
     - featureCounts 
+## workflow-graph
+<img src="bulk-rna-seq/workflow/figures/rulegraph.png" alt="Alt text" width="500">
+
 ## R-dependencies 
 
 ## All figures are reproductions of the original results published in the paper cited above. 
